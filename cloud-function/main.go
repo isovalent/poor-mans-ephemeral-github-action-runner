@@ -16,7 +16,6 @@ import (
 )
 
 const (
-	ghRepo      = "brb/cilium"
 	ghRunnerURL = "https://github.com/actions/runner/releases/download/v2.295.0/actions-runner-linux-x64-2.295.0.tar.gz"
 	ghRunnerSum = "a80c1ab58be3cd4920ac2e51948723af33c2248b434a8a20bd9b3891ca4000b6"
 
@@ -26,14 +25,22 @@ const (
 )
 
 var (
-	ghWebhookSecret              string
-	ghAppID                      int
-	ghAppInstallationID          int
-	ghAppInstallationPrivKeyPath string
+	ghRepo              string
+	ghWebhookSecret     string
+	ghAppPrivKeyPath    string
+	ghAppID             int
+	ghAppInstallationID int
+
+	gcpCredentialsPath string
 )
 
 func init() {
 	var err error
+
+	ghRepo = os.Getenv("GH_REPO")
+	if len(ghRepo) == 0 {
+		panic("GH_REPO is not set")
+	}
 
 	ghWebhookSecret = os.Getenv("GH_WEBHOOK_SECRET")
 
@@ -49,10 +56,12 @@ func init() {
 		panic(fmt.Sprintf("failed to convert GH_APP_INSTALLATION_ID to int: val=%s err=%s", id, err))
 	}
 
-	ghAppInstallationPrivKeyPath = os.Getenv("GH_APP_INSTALLATION_PRIV_KEY_PATH")
-	if len(ghAppInstallationPrivKeyPath) == 0 {
-		panic("GH_APP_INSTALLATION_PRIV_KEY_PATH is not specified")
+	ghAppPrivKeyPath = os.Getenv("GH_APP_PRIV_KEY_PATH")
+	if len(ghAppPrivKeyPath) == 0 {
+		panic("GH_APP_PRIV_KEY_PATH is not specified")
 	}
+
+	gcpCredentialsPath = os.Getenv("GCP_CREDENTIALS_PATH")
 }
 
 // registerRunner creates a new token for a Github runner. The token is going to be
@@ -61,7 +70,7 @@ func registerRunner() (string, error) {
 	ctx := context.Background()
 
 	itr, err := ghinstallation.NewKeyFromFile(http.DefaultTransport,
-		int64(ghAppID), int64(ghAppInstallationID), ghAppInstallationPrivKeyPath)
+		int64(ghAppID), int64(ghAppInstallationID), ghAppPrivKeyPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to auth: %w", err)
 	}
@@ -77,10 +86,20 @@ func registerRunner() (string, error) {
 	return *token.Token, nil
 }
 
-func createVM(id int64, ghRunnerToken string) error {
+func newComputeService() (*compute.Service, error) {
 	ctx := context.Background()
-	//c, err := compute.NewService(ctx)
-	c, err := compute.NewService(ctx, option.WithCredentialsFile("/home/brb/Downloads/gcp.json"))
+	if gcpCredentialsPath != "" {
+		return compute.NewService(ctx, option.WithCredentialsFile(gcpCredentialsPath))
+	}
+	return compute.NewService(ctx)
+}
+
+func getVMName(id int64) string {
+	return fmt.Sprintf("cilium-ci-gh-ephemeral-runner-%d", id)
+}
+
+func createVM(id int64, ghRunnerToken string) error {
+	c, err := newComputeService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize new service: %w", err)
 	}
@@ -98,17 +117,15 @@ RUNNER_ALLOW_RUNASROOT=1 ./config.sh --url https://github.com/%s --token %s --ep
 echo "gh-configured" >> ${LOG_FILE}
 RUNNER_ALLOW_RUNASROOT=1 ./run.sh >> ${LOG_FILE}
 echo "gh-done" >> ${LOG_FILE}
-sudo shutdown -h now
 `
 	script = fmt.Sprintf(script, ghRunnerURL, ghRunnerSum, ghRepo, ghRunnerToken)
-	vmName := fmt.Sprintf("martynas-hj-%d", id)
+	vmName := getVMName(id)
 
 	instance := &compute.Instance{
 		Name:        vmName,
-		Description: "TODO",
+		Description: "Cilium CI GH ephemeral runner VM",
 		MachineType: machineType,
 		NetworkInterfaces: []*compute.NetworkInterface{
-			// TODO: something more secure
 			{
 				Network: fmt.Sprintf("projects/%s/global/networks/default", project),
 				AccessConfigs: []*compute.AccessConfig{
@@ -139,29 +156,27 @@ sudo shutdown -h now
 		},
 	}
 	if _, err := c.Instances.Insert(project, zone, instance).Do(); err != nil {
-		return fmt.Errorf("failed to create VM: name=%s err=%w", vmName, err)
+		return fmt.Errorf("failed to create VM: vmname=%s err=%w", vmName, err)
 	}
 
-	log.Printf("created VM: %s\n", vmName)
+	log.Printf("created VM: vmname=%s\n", vmName)
 
 	return nil
 }
 
 func deleteVM(id int64) error {
-	ctx := context.Background()
-	//c, err := compute.NewService(ctx)
-	c, err := compute.NewService(ctx, option.WithCredentialsFile("/home/brb/Downloads/gcp.json"))
+	c, err := newComputeService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize new service: %w", err)
 	}
 
-	vmName := fmt.Sprintf("martynas-hj-%d", id)
+	vmName := getVMName(id)
 
 	if _, err := c.Instances.Delete(project, zone, vmName).Do(); err != nil {
-		return fmt.Errorf("failed to delete VM: name=%s err=%w", vmName, err)
+		return fmt.Errorf("failed to delete VM: vmname=%s err=%w", vmName, err)
 	}
 
-	log.Printf("deleted VM: %s\n", vmName)
+	log.Printf("deleted VM: vmname=%s\n", vmName)
 
 	return nil
 }
