@@ -42,7 +42,8 @@ func init() {
 		panic("GH_REPO is not set")
 	}
 
-	ghWebhookToken = os.Getenv("GH_WEBHOOK_TOKEN")
+	// Accessing it from GCP Secrets appends the newline
+	ghWebhookToken = strings.TrimSuffix(os.Getenv("GH_WEBHOOK_TOKEN"), "\n")
 
 	id := os.Getenv("GH_APP_ID")
 	ghAppID, err = strconv.Atoi(id)
@@ -122,8 +123,9 @@ echo "gh-done" >> ${LOG_FILE}
 	vmName := getVMName(id)
 
 	instance := &compute.Instance{
-		Name:        vmName,
-		Description: "Cilium CI GH ephemeral runner VM",
+		Name: vmName,
+		Description: fmt.Sprintf("Cilium CI GH ephemeral runner VM for repo %q and workjob id %d",
+			ghRepo, id),
 		MachineType: machineType,
 		NetworkInterfaces: []*compute.NetworkInterface{
 			{
@@ -222,8 +224,6 @@ func handleWorkflowJobEvent(e *github.WorkflowJobEvent) error {
 		}
 	}
 
-	// "completed"
-
 	return nil
 }
 
@@ -264,6 +264,10 @@ func HandleGithubEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	listenOn := ":8090"
+	log.Printf("Starting to listen on %s for GH_REPO=%s GH_APP_ID=%d GH_APP_INSTALLATION_ID=%s\n",
+		listenOn, ghRepo, ghAppID, ghAppInstallationID)
+
 	http.HandleFunc("/payload", HandleGithubEvents)
-	http.ListenAndServe(":8090", nil)
+	http.ListenAndServe(listenOn, nil)
 }
