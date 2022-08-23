@@ -26,7 +26,7 @@ const (
 
 var (
 	ghRepo              string
-	ghWebhookSecret     string
+	ghWebhookToken      string
 	ghAppPrivKeyPath    string
 	ghAppID             int
 	ghAppInstallationID int
@@ -42,7 +42,7 @@ func init() {
 		panic("GH_REPO is not set")
 	}
 
-	ghWebhookSecret = os.Getenv("GH_WEBHOOK_SECRET")
+	ghWebhookToken = os.Getenv("GH_WEBHOOK_TOKEN")
 
 	id := os.Getenv("GH_APP_ID")
 	ghAppID, err = strconv.Atoi(id)
@@ -228,7 +228,7 @@ func handleWorkflowJobEvent(e *github.WorkflowJobEvent) error {
 }
 
 func HandleGithubEvents(w http.ResponseWriter, r *http.Request) {
-	payload, err := github.ValidatePayload(r, []byte(ghWebhookSecret))
+	payload, err := github.ValidatePayload(r, []byte(ghWebhookToken))
 	if err != nil {
 		log.Printf("error validating request: err=%s\n", err)
 		w.WriteHeader(401)

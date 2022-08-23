@@ -31,13 +31,30 @@
     --set-secrets=GH_WEBHOOK_TOKEN=ci_gh_webhook_token:latest,/secrets/ci_gh_app_priv_key=ci_gh_app_priv_key:latest
   ```
 
+### Run locally (optional)
+
+- `cd cloud-function`
+- `sed -i 's/package p/package main/' main.go`
+- Start the server with:
+  ```
+  GH_WEBHOOK_TOKEN=${GH_WEBHOOK_TOKEN} \
+  GH_APP_ID=${GH_APP_ID} \
+  GH_APP_INSTALLATION_ID=${GH_APP_INSTALLATION_ID} \
+  GH_APP_PRIV_KEY_PATH=${GH_APP_PRIV_KEY_PATH} \
+  GH_REPO=cilium/cilium \
+  GCP_CREDENTIALS_PATH=${GCP_CREDENTIALS_PATH} \
+  go run ./main.go
+  ```
+- Expose the server to the internet with `ngrok http 8090` (use the exposed URL when
+  creating the Github Webhook below).
+
 ### Create Github Webhook
 
 - Create Webhook at https://github.com/cilium/cilium/settings/hooks with
   the following settings:
     - `Payload URL` set to the Cloud Function URL from above.
     - `Content Type` set to `application/json`
-    - `Secret` set to `GH_WEBHOOK_TOKEN`
+    - `Secret` set to `${GH_WEBHOOK_TOKEN}]`
     - Select the individual event `Workflow jobs`.
 
 ### Start using
