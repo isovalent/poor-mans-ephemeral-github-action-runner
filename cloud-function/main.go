@@ -1,4 +1,4 @@
-package p
+package main
 
 import (
 	"context"
@@ -6,10 +6,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 
+	ghinstallation "github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v45/github"
-	"golang.org/x/oauth2"
 	compute "google.golang.org/api/compute/v1"
+	"google.golang.org/api/option"
 )
 
 const (
@@ -23,25 +26,50 @@ const (
 )
 
 var (
-	ghAPIToken      string
-	ghWebhookSecret string
+	ghWebhookSecret              string
+	ghAppID                      int
+	ghAppInstallationID          int
+	ghAppInstallationPrivKeyPath string
 )
 
 func init() {
-	ghAPIToken = os.Getenv("GH_API_TOKEN")
+	var err error
+
 	ghWebhookSecret = os.Getenv("GH_WEBHOOK_SECRET")
+
+	id := os.Getenv("GH_APP_ID")
+	ghAppID, err = strconv.Atoi(id)
+	if err != nil {
+		panic(fmt.Sprintf("failed to convert GH_APP_ID to int: val=%s err=%s", id, err))
+	}
+
+	id = os.Getenv("GH_APP_INSTALLATION_ID")
+	ghAppInstallationID, err = strconv.Atoi(id)
+	if err != nil {
+		panic(fmt.Sprintf("failed to convert GH_APP_INSTALLATION_ID to int: val=%s err=%s", id, err))
+	}
+
+	ghAppInstallationPrivKeyPath = os.Getenv("GH_APP_INSTALLATION_PRIV_KEY_PATH")
+	if len(ghAppInstallationPrivKeyPath) == 0 {
+		panic("GH_APP_INSTALLATION_PRIV_KEY_PATH is not specified")
+	}
 }
 
+// registerRunner creates a new token for a Github runner. The token is going to be
+// consumed by a to-be started VM.
 func registerRunner() (string, error) {
 	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: ghAPIToken},
-	)
-	tc := oauth2.NewClient(ctx, ts)
 
-	client := github.NewClient(tc)
+	itr, err := ghinstallation.NewKeyFromFile(http.DefaultTransport,
+		int64(ghAppID), int64(ghAppInstallationID), ghAppInstallationPrivKeyPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to auth: %w", err)
+	}
 
-	token, _, err := client.Actions.CreateRegistrationToken(ctx, "brb", "cilium")
+	client := github.NewClient(&http.Client{Transport: itr})
+
+	repoInfo := strings.Split(ghRepo, "/")
+	token, _, err := client.Actions.CreateRegistrationToken(ctx, repoInfo[0], repoInfo[1])
 	if err != nil {
 		return "", fmt.Errorf("failed to create runner token: %w", err)
 	}
@@ -51,25 +79,26 @@ func registerRunner() (string, error) {
 
 func createVM(id int64, ghRunnerToken string) error {
 	ctx := context.Background()
-	c, err := compute.NewService(ctx)
-	//c, err := compute.NewService(ctx, option.WithCredentialsFile("/home/brb/Downloads/gcp.json"))
+	//c, err := compute.NewService(ctx)
+	c, err := compute.NewService(ctx, option.WithCredentialsFile("/home/brb/Downloads/gcp.json"))
 	if err != nil {
 		return fmt.Errorf("failed to initialize new service: %w", err)
 	}
 
 	script := `#!/bin/sh
+LOG_FILE=/tmp/action-runner.log
 mkdir actions-runner && cd actions-runner
-echo "gh-starting" >> /tmp/log
-curl -o actions-runner.tar.gz -L %s >> /tmp/log
-echo "gh-downloaded" >> /tmp/log
+echo "gh-starting" >> ${LOG_FILE}
+curl -o actions-runner.tar.gz -L %s >> ${LOG_FILE}
+echo "gh-downloaded" >> ${LOG_FILE}
 #echo "%s actions-runner.tar.gz" | shasum -a 256 -c
 tar xzf ./actions-runner.tar.gz
-echo "configuring" >> /tmp/log
-RUNNER_ALLOW_RUNASROOT=1 ./config.sh --url https://github.com/%s --token %s --ephemeral --unattended >> /tmp/log
-echo "configured" >> /tmp/log
-RUNNER_ALLOW_RUNASROOT=1 ./run.sh >> /tmp/log
-echo "done" >> /tmp/log
-#sudo shutdown -h now
+echo "gh-configuring" >> ${LOG_FILE}
+RUNNER_ALLOW_RUNASROOT=1 ./config.sh --url https://github.com/%s --token %s --ephemeral --unattended >> ${LOG_FILE}
+echo "gh-configured" >> ${LOG_FILE}
+RUNNER_ALLOW_RUNASROOT=1 ./run.sh >> ${LOG_FILE}
+echo "gh-done" >> ${LOG_FILE}
+sudo shutdown -h now
 `
 	script = fmt.Sprintf(script, ghRunnerURL, ghRunnerSum, ghRepo, ghRunnerToken)
 	vmName := fmt.Sprintf("martynas-hj-%d", id)
@@ -120,8 +149,8 @@ echo "done" >> /tmp/log
 
 func deleteVM(id int64) error {
 	ctx := context.Background()
-	c, err := compute.NewService(ctx)
-	//c, err := compute.NewService(ctx, option.WithCredentialsFile("/home/brb/Downloads/gcp.json"))
+	//c, err := compute.NewService(ctx)
+	c, err := compute.NewService(ctx, option.WithCredentialsFile("/home/brb/Downloads/gcp.json"))
 	if err != nil {
 		return fmt.Errorf("failed to initialize new service: %w", err)
 	}
