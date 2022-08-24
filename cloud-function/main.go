@@ -106,6 +106,9 @@ func createVM(id int64, ghRunnerToken string) error {
 	}
 
 	script := `#!/bin/sh
+apt-get update
+apt-get install -y jq docker.io golang-go
+
 LOG_FILE=/tmp/action-runner.log
 mkdir actions-runner && cd actions-runner
 echo "gh-starting" >> ${LOG_FILE}
