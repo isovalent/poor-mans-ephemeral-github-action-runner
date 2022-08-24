@@ -8,6 +8,9 @@
 
 ### Create Github App
 
+This step is no longer needed, as the GH App was created:
+https://github.com/apps/cilium-gh-ephemeral-runner-tokens.
+
 - Go to https://github.com/settings/apps/new
 - Create a new app with the following permission settings:
     - `Actions` (read)
