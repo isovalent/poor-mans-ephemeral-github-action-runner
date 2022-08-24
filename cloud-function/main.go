@@ -19,8 +19,8 @@ const (
 	ghRunnerURL = "https://github.com/actions/runner/releases/download/v2.295.0/actions-runner-linux-x64-2.295.0.tar.gz"
 	ghRunnerSum = "a80c1ab58be3cd4920ac2e51948723af33c2248b434a8a20bd9b3891ca4000b6"
 
-	project     = "cilium-dev"
-	zone        = "europe-west1-b"
+	project     = "cilium-ci-gh-temp"
+	zone        = "us-central1-a"
 	machineType = "projects/" + project + "/zones/" + zone + "/machineTypes/n1-standard-4"
 )
 
@@ -129,7 +129,11 @@ echo "gh-done" >> ${LOG_FILE}
 		Name: vmName,
 		Description: fmt.Sprintf("Cilium CI GH ephemeral runner VM for repo %q and workjob id %d",
 			ghRepo, id),
-		MachineType: machineType,
+		MachineType:    machineType,
+		MinCpuPlatform: "Intel Haswell",
+		AdvancedMachineFeatures: &compute.AdvancedMachineFeatures{
+			EnableNestedVirtualization: true,
+		},
 		NetworkInterfaces: []*compute.NetworkInterface{
 			{
 				Network: fmt.Sprintf("projects/%s/global/networks/default", project),
@@ -169,13 +173,11 @@ echo "gh-done" >> ${LOG_FILE}
 	return nil
 }
 
-func deleteVM(id int64) error {
+func deleteVM(vmName string) error {
 	c, err := newComputeService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize new service: %w", err)
 	}
-
-	vmName := getVMName(id)
 
 	if _, err := c.Instances.Delete(project, zone, vmName).Do(); err != nil {
 		return fmt.Errorf("failed to delete VM: vmname=%s err=%w", vmName, err)
@@ -211,6 +213,8 @@ func handleWorkflowJobEvent(e *github.WorkflowJobEvent) error {
 		return nil
 	}
 
+	log.Printf("Handling workflow job: id=%d\n", *e.WorkflowJob.ID)
+
 	switch *(e.Action) {
 	case "queued":
 		token, err := registerRunner()
@@ -222,8 +226,10 @@ func handleWorkflowJobEvent(e *github.WorkflowJobEvent) error {
 			return fmt.Errorf("failed to create VM: %w", err)
 		}
 	case "completed":
-		if err := deleteVM(*e.WorkflowJob.ID); err != nil {
-			return fmt.Errorf("failed to delete VM: %w", err)
+		if e.WorkflowJob.RunnerName != nil {
+			if err := deleteVM(*e.WorkflowJob.RunnerName); err != nil {
+				return fmt.Errorf("failed to delete VM: %w", err)
+			}
 		}
 	}
 
