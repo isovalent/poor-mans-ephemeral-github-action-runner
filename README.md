@@ -30,7 +30,7 @@ https://github.com/apps/cilium-gh-ephemeral-runner-tokens.
   ```
   gcloud functions deploy HandleGithubEvents \
     --runtime go116 --trigger-http --allow-unauthenticated \
-    --set-env-vars=GH_APP_ID=${GH_APP_ID},GH_APP_INSTALLATION_ID=${GH_APP_INSTALLATION_ID},GH_REPO="cilium/cilium",GH_APP_PRIV_KEY_PATH=/secrets/ci_gh_app_priv_key \
+    --set-env-vars=GH_APP_ID=${GH_APP_ID},GH_APP_INSTALLATION_ID=${GH_APP_INSTALLATION_ID},GH_REPOS="cilium/cilium,cilium/tetragon",GH_APP_PRIV_KEY_PATH=/secrets/ci_gh_app_priv_key \
     --set-secrets=GH_WEBHOOK_TOKEN=ci_gh_webhook_token:latest,/secrets/ci_gh_app_priv_key=ci_gh_app_priv_key:latest
   ```
 
@@ -44,7 +44,7 @@ https://github.com/apps/cilium-gh-ephemeral-runner-tokens.
   GH_APP_ID=${GH_APP_ID} \
   GH_APP_INSTALLATION_ID=${GH_APP_INSTALLATION_ID} \
   GH_APP_PRIV_KEY_PATH=${GH_APP_PRIV_KEY_PATH} \
-  GH_REPO=cilium/cilium \
+  GH_REPOS=cilium/cilium \
   GCP_CREDENTIALS_PATH=${GCP_CREDENTIALS_PATH} \
   go run ./main.go
   ```

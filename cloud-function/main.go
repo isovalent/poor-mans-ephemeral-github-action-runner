@@ -25,7 +25,7 @@ const (
 )
 
 var (
-	ghRepo              string
+	ghRepos             []string
 	ghWebhookToken      string
 	ghAppPrivKeyPath    string
 	ghAppID             int
@@ -37,9 +37,9 @@ var (
 func init() {
 	var err error
 
-	ghRepo = os.Getenv("GH_REPO")
-	if len(ghRepo) == 0 {
-		panic("GH_REPO is not set")
+	ghRepos = strings.Split(os.Getenv("GH_REPOS"), ",")
+	if len(ghRepos) == 0 {
+		panic("GH_REPOS is not set")
 	}
 
 	// Accessing it from GCP Secrets appends the newline
@@ -67,7 +67,7 @@ func init() {
 
 // registerRunner creates a new token for a Github runner. The token is going to be
 // consumed by a to-be started VM.
-func registerRunner() (string, error) {
+func registerRunner(repo string) (string, error) {
 	ctx := context.Background()
 
 	itr, err := ghinstallation.NewKeyFromFile(http.DefaultTransport,
@@ -78,7 +78,7 @@ func registerRunner() (string, error) {
 
 	client := github.NewClient(&http.Client{Transport: itr})
 
-	repoInfo := strings.Split(ghRepo, "/")
+	repoInfo := strings.Split(repo, "/")
 	token, _, err := client.Actions.CreateRegistrationToken(ctx, repoInfo[0], repoInfo[1])
 	if err != nil {
 		return "", fmt.Errorf("failed to create runner token: %w", err)
@@ -99,7 +99,7 @@ func getVMName(id int64) string {
 	return fmt.Sprintf("cilium-ci-gh-ephemeral-runner-%d", id)
 }
 
-func createVM(id int64, ghRunnerToken string) error {
+func createVM(id int64, ghRunnerToken string, repo string) error {
 	c, err := newComputeService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize new service: %w", err)
@@ -107,7 +107,7 @@ func createVM(id int64, ghRunnerToken string) error {
 
 	script := `#!/bin/sh
 apt-get update
-apt-get install -y jq docker.io golang-go
+apt-get install -y jq docker.io golang-go qemu-system-x86
 
 LOG_FILE=/tmp/action-runner.log
 mkdir actions-runner && cd actions-runner
@@ -122,13 +122,13 @@ echo "gh-configured" >> ${LOG_FILE}
 RUNNER_ALLOW_RUNASROOT=1 ./run.sh >> ${LOG_FILE}
 echo "gh-done" >> ${LOG_FILE}
 `
-	script = fmt.Sprintf(script, ghRunnerURL, ghRunnerSum, ghRepo, ghRunnerToken)
+	script = fmt.Sprintf(script, ghRunnerURL, ghRunnerSum, repo, ghRunnerToken)
 	vmName := getVMName(id)
 
 	instance := &compute.Instance{
 		Name: vmName,
 		Description: fmt.Sprintf("Cilium CI GH ephemeral runner VM for repo %q and workjob id %d",
-			ghRepo, id),
+			repo, id),
 		MachineType:    machineType,
 		MinCpuPlatform: "Intel Haswell",
 		AdvancedMachineFeatures: &compute.AdvancedMachineFeatures{
@@ -188,9 +188,24 @@ func deleteVM(vmName string) error {
 	return nil
 }
 
+func isAllowedRepo(repo string) bool {
+	for _, r := range ghRepos {
+		if r == repo {
+			return true
+		}
+	}
+	return false
+}
+
 func handleWorkflowJobEvent(e *github.WorkflowJobEvent) error {
-	if e.Repo == nil || *(e.Repo.FullName) != ghRepo {
-		return fmt.Errorf("invalid repo (%s)", e.Repo)
+	if e.Repo == nil {
+		return fmt.Errorf("repo is not set")
+	}
+
+	repo := *(e.Repo.FullName)
+
+	if !isAllowedRepo(repo) {
+		return nil
 	}
 
 	if e.Action == nil || (*(e.Action) != "queued" && *(e.Action) != "completed") {
@@ -217,12 +232,12 @@ func handleWorkflowJobEvent(e *github.WorkflowJobEvent) error {
 
 	switch *(e.Action) {
 	case "queued":
-		token, err := registerRunner()
+		token, err := registerRunner(repo)
 		if err != nil {
 			return fmt.Errorf("failed to register runner: %w", err)
 		}
 
-		if err := createVM(*e.WorkflowJob.ID, token); err != nil {
+		if err := createVM(*e.WorkflowJob.ID, token, repo); err != nil {
 			return fmt.Errorf("failed to create VM: %w", err)
 		}
 	case "completed":
@@ -274,8 +289,8 @@ func HandleGithubEvents(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	listenOn := ":8090"
-	log.Printf("Starting to listen on %s for GH_REPO=%s GH_APP_ID=%d GH_APP_INSTALLATION_ID=%s\n",
-		listenOn, ghRepo, ghAppID, ghAppInstallationID)
+	log.Printf("Starting to listen on %s for GH_REPOS=%v GH_APP_ID=%d GH_APP_INSTALLATION_ID=%s\n",
+		listenOn, ghRepos, ghAppID, ghAppInstallationID)
 
 	http.HandleFunc("/payload", HandleGithubEvents)
 	http.ListenAndServe(listenOn, nil)
