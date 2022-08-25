@@ -14,8 +14,9 @@ https://github.com/apps/cilium-gh-ephemeral-runner-tokens.
 - Go to https://github.com/settings/apps/new
 - Create a new app with the following permission settings:
     - `Actions` (read)
-    - `Administration` (read / write)
     - `Metadata` (read)
+    - For `Repository`: `Administration` (read / write)
+    - For `Organization`: `Self Hosted Runners` (read / write)
 - Store the App ID (`GH_APP_ID`).
 - Generate a new private key (`GH_APP_PRIV_KEY_PATH`).
 - Install the app and store the installation ID (`GH_APP_INSTALLATION_ID`).
@@ -30,7 +31,7 @@ https://github.com/apps/cilium-gh-ephemeral-runner-tokens.
   ```
   gcloud functions deploy HandleGithubEvents \
     --runtime go116 --trigger-http --allow-unauthenticated \
-    --set-env-vars=GH_APP_ID=${GH_APP_ID},GH_APP_INSTALLATION_ID=${GH_APP_INSTALLATION_ID},GH_REPOS="cilium/cilium,cilium/tetragon",GH_APP_PRIV_KEY_PATH=/secrets/ci_gh_app_priv_key \
+    --set-env-vars=^:^GH_APP_ID=${GH_APP_ID}:GH_APP_INSTALLATION_ID=${GH_APP_INSTALLATION_ID}:GH_REPOS=cilium/cilium,cilium/tetragon:GH_APP_PRIV_KEY_PATH=/secrets/ci_gh_app_priv_key \
     --set-secrets=GH_WEBHOOK_TOKEN=ci_gh_webhook_token:latest,/secrets/ci_gh_app_priv_key=ci_gh_app_priv_key:latest
   ```
 
