@@ -3,11 +3,13 @@ package p
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	ghinstallation "github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v45/github"
@@ -32,6 +34,8 @@ var (
 	ghAppInstallationID int
 
 	gcpCredentialsPath string
+	gcpVMTTL           time.Duration
+	gcpGCAuthToken     string
 )
 
 func init() {
@@ -63,6 +67,17 @@ func init() {
 	}
 
 	gcpCredentialsPath = os.Getenv("GCP_CREDENTIALS_PATH")
+
+	ttl := os.Getenv("GCP_VM_TTL")
+	if ttl == "" {
+		ttl = "2h"
+	}
+	gcpVMTTL, err = time.ParseDuration(ttl)
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse GCP_VM_TTL: val=%s err=%s", ttl, err))
+	}
+
+	gcpGCAuthToken = os.Getenv("GCP_GC_AUTH_TOKEN")
 }
 
 // registerRunner creates a new token for a Github runner. The token is going to be
@@ -284,14 +299,76 @@ func HandleGithubEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(200)
-	return
+}
+
+func gcInstances() error {
+	c, err := newComputeService()
+	if err != nil {
+		return fmt.Errorf("failed to initialize new service: %w", err)
+	}
+
+	res, err := c.Instances.AggregatedList(project).Do()
+	if err != nil {
+		return fmt.Errorf("failed to list instances: err=%w", err)
+	}
+
+	for zone, instances := range res.Items {
+		zone := strings.TrimPrefix(zone, "zones/")
+		for _, instance := range instances.Instances {
+			t, err := time.Parse(time.RFC3339, instance.CreationTimestamp)
+			if err != nil {
+				log.Printf("failed to parse instance creation time: instance=%s, ts=%s",
+					instance.Name, instance.CreationTimestamp)
+				continue
+			}
+
+			t = t.Add(gcpVMTTL)
+			if time.Now().Before(t) {
+				continue
+			}
+
+			log.Printf("deleting stale VM: vmname=%s, creation-time=%s",
+				instance.Name, instance.CreationTimestamp)
+			if _, err := c.Instances.Delete(project, zone, instance.Name).Do(); err != nil {
+				log.Printf("failed to delete VM: vmname=%s err=%s", instance.Name, err)
+			}
+		}
+	}
+
+	return nil
+
+}
+
+func HandleGC(w http.ResponseWriter, r *http.Request) {
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("error reading body: %v", err)
+		http.Error(w, "can't read body", http.StatusBadRequest)
+		return
+	}
+
+	// poor man's auth
+	if string(body) != gcpGCAuthToken {
+		log.Printf("failed to auth (token mismatch)")
+		w.WriteHeader(400)
+		return
+	}
+
+	if err := gcInstances(); err != nil {
+		log.Printf("failed to handle GC request: err=%s", err)
+		w.WriteHeader(400)
+		return
+	}
+
+	w.WriteHeader(200)
 }
 
 func main() {
 	listenOn := ":8090"
-	log.Printf("Starting to listen on %s for GH_REPOS=%v GH_APP_ID=%d GH_APP_INSTALLATION_ID=%s\n",
+	log.Printf("Starting to listen on %s for GH_REPOS=%v GH_APP_ID=%d GH_APP_INSTALLATION_ID=%d\n",
 		listenOn, ghRepos, ghAppID, ghAppInstallationID)
 
 	http.HandleFunc("/payload", HandleGithubEvents)
+	http.HandleFunc("/gc", HandleGC)
 	http.ListenAndServe(listenOn, nil)
 }

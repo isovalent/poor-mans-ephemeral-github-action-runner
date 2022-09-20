@@ -1,9 +1,5 @@
 # Poor Man's Ephemeral Github Action Runner
 
-## TODO
-
-- [ ] Schedule VM removal in case we miss GH Webhook "completed" event.
-
 ## HOWTO
 
 ### Create Github App
@@ -21,19 +17,34 @@ https://github.com/apps/cilium-gh-ephemeral-runner-tokens.
 - Generate a new private key (`GH_APP_PRIV_KEY_PATH`).
 - Install the app and store the installation ID (`GH_APP_INSTALLATION_ID`).
 
-### Create Cloud Function
+### Create Cloud Functions and Cloud Scheduler
 
 - Create a random `GH_WEBHOOK_TOKEN`.
 - Create the following secrets:
     - `gcloud secrets create "ci_gh_webhook_token" --replication-policy "automatic" --data-file - <<< "${GH_WEBHOOK_TOKEN}"`
     - `gcloud secrets create "ci_gh_app_priv_key" --replication-policy "automatic" --data-file "${GH_APP_PRIV_KEY_PATH}"`
-- Deploy Clound Function with:
+- Deploy Cloud Function to schedule VMs with:
   ```
   gcloud functions deploy HandleGithubEvents \
     --runtime go116 --trigger-http --allow-unauthenticated \
     --set-env-vars=^:^GH_APP_ID=${GH_APP_ID}:GH_APP_INSTALLATION_ID=${GH_APP_INSTALLATION_ID}:GH_REPOS=cilium/cilium,cilium/tetragon:GH_APP_PRIV_KEY_PATH=/secrets/ci_gh_app_priv_key \
     --set-secrets=GH_WEBHOOK_TOKEN=ci_gh_webhook_token:latest,/secrets/ci_gh_app_priv_key=ci_gh_app_priv_key:latest
   ```
+- Deploy Cloud Function to GC stale VMs:
+  ```
+  gcloud functions deploy HandleGC --runtime go116 --trigger-http --allow-unauthenticated \
+     --set-env-vars GH_APP_ID=42,GH_APP_INSTALLATION_ID=42,GH_REPOS=notused,GH_APP_PRIV_KEY_PATH=notused,GH_WEBHOOK_TOKEN=notused,GCP_VM_TTL=2h,GCP_GC_AUTH_TOKEN=${GCP_GC_AUTH_TOKEN}
+  ```
+- Create Cloud Scheduler to start the GC every 10 minutes:
+```
+gcloud scheduler jobs create http gc-stale-gh-action-vms \
+    --location us-central1-a \
+    --schedule "*/10 * * * *" \
+    --uri "${CLOUD_FUNCTION_GC_URL}" \
+    --http-method POST \
+    --message-body "${GCP_GC_AUTH_TOKEN}"
+```
+
 
 ### Run locally (optional)
 
