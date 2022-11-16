@@ -20,7 +20,7 @@ import (
 const (
 	project     = "cilium-ci-gh-temp"
 	zone        = "us-central1-a"
-	machineType = "projects/" + project + "/zones/" + zone + "/machineTypes/n1-standard-4"
+	machineType = "projects/" + project + "/zones/" + zone + "/machineTypes/n1-standard-8"
 )
 
 var (
