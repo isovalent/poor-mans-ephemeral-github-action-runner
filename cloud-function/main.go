@@ -18,9 +18,6 @@ import (
 )
 
 const (
-	ghRunnerURL = "https://github.com/actions/runner/releases/download/v2.295.0/actions-runner-linux-x64-2.295.0.tar.gz"
-	ghRunnerSum = "a80c1ab58be3cd4920ac2e51948723af33c2248b434a8a20bd9b3891ca4000b6"
-
 	project     = "cilium-ci-gh-temp"
 	zone        = "us-central1-a"
 	machineType = "projects/" + project + "/zones/" + zone + "/machineTypes/n1-standard-4"
@@ -36,6 +33,9 @@ var (
 	gcpCredentialsPath string
 	gcpVMTTL           time.Duration
 	gcpGCAuthToken     string
+
+	ghRunnerURL string
+	ghRunnerSum string
 )
 
 func init() {
@@ -78,6 +78,15 @@ func init() {
 	}
 
 	gcpGCAuthToken = os.Getenv("GCP_GC_AUTH_TOKEN")
+
+	ghRunnerURL = os.Getenv("GH_RUNNER_URL")
+	if len(ghRunnerURL) == 0 {
+		panic("GH_RUNNER_URL is not specified")
+	}
+	ghRunnerSum = os.Getenv("GH_RUNNER_SUM")
+	if len(ghRunnerSum) == 0 {
+		panic("GH_RUNNER_SUM is not specified")
+	}
 }
 
 // registerRunner creates a new token for a Github runner. The token is going to be
